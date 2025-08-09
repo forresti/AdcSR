@@ -55,6 +55,8 @@ model = torch.nn.Sequential(
     decoder.conv_out,
 ).to(device)
 
+model.half()
+
 test_LR_paths = list(sorted(glob.glob(os.path.join(args.LR_dir, "*.png")) +
                            glob.glob(os.path.join(args.LR_dir, "*.jpg")) +
                            glob.glob(os.path.join(args.LR_dir, "*.jpeg"))))
@@ -66,10 +68,13 @@ os.makedirs(args.SR_dir, exist_ok=True)
 
 print("starting inference")
 
+# import pdb; pdb.set_trace()
+
 with torch.no_grad():
     for i, path in enumerate(test_LR_paths):
         LR = Image.open(path).convert("RGB")
         LR = transforms.ToTensor()(LR).to(device).unsqueeze(0) * 2 - 1
+        LR = LR.half()
 
         torch.cuda.synchronize()
         start_time = time()
