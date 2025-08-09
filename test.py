@@ -5,6 +5,7 @@ from PIL import Image
 from argparse import ArgumentParser
 from torchvision import transforms
 from model import Net
+from time import time
 
 parser = ArgumentParser()
 parser.add_argument("--epoch", type=int, default=200)
@@ -26,16 +27,16 @@ unet = pipe.unet
 noise_scheduler = pipe.scheduler
 text_encoder = pipe.text_encoder
 
-from diffusers.models.autoencoders.vae import Decoder 
+from diffusers.models.autoencoders.vae import Decoder
 ckpt_halfdecoder = torch.load("./weight/pretrained/halfDecoder.ckpt", weights_only=False)
 decoder = Decoder(in_channels=4,
             out_channels=3,
             up_block_types=["UpDecoderBlock2D" for _ in range(4)],
             block_out_channels=[64, 128, 256, 256],
-            layers_per_block=2, 
-            norm_num_groups=32, 
-            act_fn="silu", 
-            norm_type="group", 
+            layers_per_block=2,
+            norm_num_groups=32,
+            act_fn="silu",
+            norm_type="group",
             mid_block_add_attention=True).to(device)
 decoder_ckpt = {}
 for k,v in ckpt_halfdecoder["state_dict"].items():
@@ -54,17 +55,32 @@ model = torch.nn.Sequential(
     decoder.conv_out,
 ).to(device)
 
-test_LR_paths = list(sorted(glob.glob(os.path.join(args.LR_dir, "*.png"))))
-test_HR_paths = list(sorted(glob.glob(os.path.join(args.HR_dir, "*.png"))))
+test_LR_paths = list(sorted(glob.glob(os.path.join(args.LR_dir, "*.png")) +
+                           glob.glob(os.path.join(args.LR_dir, "*.jpg")) +
+                           glob.glob(os.path.join(args.LR_dir, "*.jpeg"))))
+test_HR_paths = list(sorted(glob.glob(os.path.join(args.HR_dir, "*.png")) +
+                           glob.glob(os.path.join(args.HR_dir, "*.jpg")) +
+                           glob.glob(os.path.join(args.HR_dir, "*.jpeg"))))
 
 os.makedirs(args.SR_dir, exist_ok=True)
+
+print("starting inference")
 
 with torch.no_grad():
     for i, path in enumerate(test_LR_paths):
         LR = Image.open(path).convert("RGB")
         LR = transforms.ToTensor()(LR).to(device).unsqueeze(0) * 2 - 1
+
+        torch.cuda.synchronize()
+        start_time = time()
+
         SR = model(LR)
         SR = (SR - SR.mean(dim=[2,3],keepdim=True)) / SR.std(dim=[2,3],keepdim=True) \
              * LR.std(dim=[2,3],keepdim=True) + LR.mean(dim=[2,3],keepdim=True)
+
+        torch.cuda.synchronize()
+        total_time = time() - start_time
+        print(f"time {total_time} sec")
+
         SR = transforms.ToPILImage()((SR[0] / 2 + 0.5).clamp(0, 1).cpu())
         SR.save(os.path.join(args.SR_dir, os.path.basename(path)))

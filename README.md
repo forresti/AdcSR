@@ -84,8 +84,27 @@ chmod +x train.sh train_debug.sh test_debug.sh evaluate_debug.sh
    ./testset/RealSR/LR/xxx.png
    ./testset/RealSR/HR/xxx.png
    ```
-3. **Download model weights** (`net_params_200.pkl`) from the same link and place it in `./weight/`.  
-4. **Run the test script** (or modify and execute `./test_debug.sh` for convenience):  
+3. **Download model weights** (`net_params_200.pkl`) from the same link and place it in `./weight/`.
+
+Specifically, do this:
+
+```
+mkdir weight
+cd weight
+hf download Guaishou74851/AdcSR weight/net_params_200.pkl --revision main --local-dir .
+
+mkdir pretrained
+cd pretrained
+hf download Guaishou74851/AdcSR weight/pretrained/halfDecoder.ckpt --revision main --local-dir .
+hf download Guaishou74851/AdcSR weight/pretrained/DAPE.pth --revision main --local-dir .
+hf download Guaishou74851/AdcSR weight/pretrained/osediff.pkl --revision main --local-dir .
+hf download Guaishou74851/AdcSR weight/pretrained/ram_swin_large_14m.pth --revision main --local-dir .
+
+
+```
+
+
+4. **Run the test script** (or modify and execute `./test_debug.sh` for convenience):
    ```bash
    python test.py --LR_dir=path_to_LR_images --SR_dir=path_to_SR_images
    ```
@@ -116,7 +135,7 @@ This repo provides code for **Stage 2** training (**adversarial distillation**).
    CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m torch.distributed.run --nproc_per_node=8 --master_port=23333 train.py
    ```
    The trained model will be saved in `./weight/`.
-   
+
 ## 🥰 Acknowledgement
 
 This project is built upon the codes of [Latent Diffusion Models](https://github.com/CompVis/latent-diffusion), [Diffusers](https://github.com/huggingface/diffusers), [BasicSR](https://github.com/XPixelGroup/BasicSR), and [OSEDiff](https://github.com/cswry/OSEDiff). We sincerely thank the authors of these repos for their significant contributions.
