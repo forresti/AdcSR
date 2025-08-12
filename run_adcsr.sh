@@ -18,5 +18,7 @@ python test_mixed_precision.py \
    --SR_dir=$out_dir \
    --use_mixed_precision \
    --precision_mode autocast \
-   --debug_nan
+   --debug_nan \
+   --keep_fp32_layers 4 5 \
+   --precision_mode safe
   #  --compare_precision
