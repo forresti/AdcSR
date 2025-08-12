@@ -17,5 +17,6 @@ python test_mixed_precision.py \
    --LR_dir=$in_dir \
    --SR_dir=$out_dir \
    --use_mixed_precision \
-   --precision_mode autocast
+   --precision_mode autocast \
+   --debug_nan
   #  --compare_precision
