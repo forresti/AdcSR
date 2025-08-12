@@ -156,8 +156,8 @@ def register_hooks(model, prefix=""):
 
     for name, module in model.named_modules():
         if len(list(module.children())) == 0:  # Leaf modules only
-            full_name = f"{prefix}_{name}" if prefix else name
-            hook = module.register_forward_hook(DebugHook(full_name, activations))
+            # Use consistent naming without prefix to ensure matching keys
+            hook = module.register_forward_hook(DebugHook(name, activations))
             hooks.append(hook)
 
     return activations, hooks
@@ -195,8 +195,8 @@ with torch.no_grad():
 
         # Register hooks for detailed debugging if requested
         if args.compare_precision:
-            activations_fp32, hooks_fp32 = register_hooks(model_fp32, "fp32")
-            activations_fp16, hooks_fp16 = register_hooks(model_fp16, "fp16")
+            activations_fp32, hooks_fp32 = register_hooks(model_fp32)
+            activations_fp16, hooks_fp16 = register_hooks(model_fp16)
 
         # Forward pass
         torch.cuda.synchronize()
@@ -239,24 +239,51 @@ with torch.no_grad():
         if args.compare_precision:
             print("\n--- Layer-by-Layer Analysis ---")
 
+            # Debug: Check what keys we captured
+            print(f"FP32 captured {len(activations_fp32)} layers: {list(activations_fp32.keys())[:5]}...")
+            print(f"FP16 captured {len(activations_fp16)} layers: {list(activations_fp16.keys())[:5]}...")
+
             # Compare activations
             common_keys = set(activations_fp32.keys()) & set(activations_fp16.keys())
+            print(f"Common keys: {len(common_keys)}")
+
+            if len(common_keys) == 0:
+                print("🚨 No common keys found! Debugging hook registration...")
+                print("FP32 keys sample:", list(activations_fp32.keys())[:10])
+                print("FP16 keys sample:", list(activations_fp16.keys())[:10])
 
             significant_diffs = []
+            nan_layers = []
+
             for key in sorted(common_keys):
                 act_fp32 = activations_fp32[key]
                 act_fp16 = activations_fp16[key]
 
                 if isinstance(act_fp32, torch.Tensor) and isinstance(act_fp16, torch.Tensor):
+                    # Check for NaN/Inf in FP16 activations
+                    has_nan = torch.isnan(act_fp16).any().item()
+                    has_inf = torch.isinf(act_fp16).any().item()
+
+                    if has_nan or has_inf:
+                        nan_layers.append((key, has_nan, has_inf))
+                        print(f"  🚨 {key}: FP16 has NaN={has_nan}, Inf={has_inf}")
+
                     diff_stats = compare_tensors(act_fp32, act_fp16, key)
                     if diff_stats and diff_stats['significant_diff']:
                         significant_diffs.append((key, diff_stats))
+
+            if nan_layers:
+                print(f"\n🚨 Found {len(nan_layers)} layers with NaN/Inf in FP16:")
+                for key, has_nan, has_inf in nan_layers:
+                    print(f"  {key}: NaN={has_nan}, Inf={has_inf}")
+                print("\n💡 First NaN layer is likely the root cause!")
 
             if significant_diffs:
                 print(f"\n🚨 Found {len(significant_diffs)} layers with significant differences:")
                 for key, stats in significant_diffs[:10]:  # Show top 10
                     print(f"  {key}: max_abs_diff={stats['max_abs_diff']:.6f}")
-            else:
+
+            if not nan_layers and not significant_diffs and len(common_keys) > 0:
                 print("\n✅ No significant differences found in layer outputs")
 
             # Clean up hooks
@@ -288,18 +315,13 @@ with torch.no_grad():
 
         if black_ratio_fp16 > 0.9:
             print(f"🚨 WARNING: FP16 image is {black_ratio_fp16*100:.1f}% black pixels!")
+            print(f"💡 This is likely due to NaN values in the FP16 forward pass")
         else:
             print(f"✅ FP16 image looks normal ({black_ratio_fp16*100:.1f}% black pixels)")
 
         print(f"Images saved to {args.SR_dir}_fp32 and {args.SR_dir}_fp16")
 
-        if i == 0:  # Show detailed analysis for first image
-            print(f"\n=== Detailed Analysis Summary ===")
-            print(f"If the FP16 model is producing black images, check:")
-            print(f"1. Raw output statistics - look for NaN/Inf values")
-            print(f"2. Normalization step - division by very small std values")
-            print(f"3. Specific layers with significant differences")
-            print(f"4. Gradient/activation scaling issues in half precision")
+
 
 print("\n=== Analysis Complete ===")
 print(f"Results saved in:")
