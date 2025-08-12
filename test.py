@@ -54,8 +54,12 @@ model = torch.nn.Sequential(
     decoder.conv_act,
     decoder.conv_out,
 ).to(device)
+model.eval()
 
-model.half()
+# model.half()
+
+# model = torch.compile(model, mode="reduce-overhead", fullgraph=True)
+
 
 test_LR_paths = list(sorted(glob.glob(os.path.join(args.LR_dir, "*.png")) +
                            glob.glob(os.path.join(args.LR_dir, "*.jpg")) +
@@ -74,7 +78,7 @@ with torch.no_grad():
     for i, path in enumerate(test_LR_paths):
         LR = Image.open(path).convert("RGB")
         LR = transforms.ToTensor()(LR).to(device).unsqueeze(0) * 2 - 1
-        LR = LR.half()
+        # LR = LR.half()
 
         torch.cuda.synchronize()
         start_time = time()
