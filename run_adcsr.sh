@@ -6,8 +6,14 @@
 # in_dir=testset/DigitalZoom_SR_dataset_20250307/LR
 # out_dir=testset/DigitalZoom_SR_dataset_20250307/results_fp16
 
-in_dir=testset/sg_cropped/LR_square
-out_dir=testset/sg_cropped/LR_square_results_fp16
+# in_dir=testset/sg_cropped/LR_square
+# out_dir=testset/sg_cropped/LR_square_results_fp16
+
+in_dir=testset/sg_cropped/faces_crop_fi_512
+out_dir=testset/sg_cropped/faces_crop_fi_512_fp16
+
+# in_dir=testset/sg_cropped/faces_crop_fi_256
+# out_dir=testset/sg_cropped/faces_crop_fi_256_fp16
 
 mkdir -p $out_dir
 
