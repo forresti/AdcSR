@@ -1,7 +1,7 @@
 #!/bin/bash
 
-in_dir=testset/sg_cropped/faces_crop_fi_512
-out_dir=testset/sg_cropped/faces_crop_fi_512_results
+in_dir=testset/sg_cropped/faces_crop_fi_256
+out_dir=testset/sg_cropped/faces_crop_fi_256_results
 
 mkdir -p $out_dir
 

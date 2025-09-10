@@ -106,76 +106,76 @@ os.makedirs(export_dir, exist_ok=True)
 # model_torchscript = torch.jit.trace(wrapped, example, check_trace=False)
 # torch.jit.save(model_torchscript, f"{export_dir}/model_torchscript.pt")
 
-model_pte = aot_export(wrapped, (example,))
-aot_save(model_pte, f"{export_dir}/model_pte.pt")
+# model_pte = aot_export(wrapped, (example,))
+# aot_save(model_pte, f"{export_dir}/model_pte.pt")
 
 
 print("starting inference")
 
-with torch.no_grad():
-    for i, path in enumerate(test_LR_paths):
-        LR = Image.open(path).convert("RGB")
-        LR = transforms.ToTensor()(LR).to(device).unsqueeze(0) * 2 - 1
-        # LR = LR.half()
+# with torch.no_grad():
+#     for i, path in enumerate(test_LR_paths):
+#         LR = Image.open(path).convert("RGB")
+#         LR = transforms.ToTensor()(LR).to(device).unsqueeze(0) * 2 - 1
+#         # LR = LR.half()
 
-        torch.cuda.synchronize()
-        start_time = time()
+#         torch.cuda.synchronize()
+#         start_time = time()
 
-        SR = model(LR)
-        SR = (SR - SR.mean(dim=[2,3],keepdim=True)) / SR.std(dim=[2,3],keepdim=True) \
-             * LR.std(dim=[2,3],keepdim=True) + LR.mean(dim=[2,3],keepdim=True)
+#         SR = model(LR)
+#         SR = (SR - SR.mean(dim=[2,3],keepdim=True)) / SR.std(dim=[2,3],keepdim=True) \
+#              * LR.std(dim=[2,3],keepdim=True) + LR.mean(dim=[2,3],keepdim=True)
 
-        torch.cuda.synchronize()
-        total_time = time() - start_time
-        print(f"time {total_time} sec")
+#         torch.cuda.synchronize()
+#         total_time = time() - start_time
+#         print(f"time {total_time} sec")
 
-        SR = transforms.ToPILImage()((SR[0] / 2 + 0.5).clamp(0, 1).cpu())
-        SR.save(os.path.join(args.SR_dir, os.path.basename(path)))
+#         SR = transforms.ToPILImage()((SR[0] / 2 + 0.5).clamp(0, 1).cpu())
+#         SR.save(os.path.join(args.SR_dir, os.path.basename(path)))
 
 
-# ---- minimal config ----
+# ---- one-line config ----
 export_path = f"{export_dir}/model_pte.pt"   # where you saved torch.export
-PTE_INCLUDES_POST = True  # set False if your export DID NOT include the LR/SR re-normalization
+PTE_HAS_POST = True  # set True if your exported model already does the mean/std renorm
 
-# load exported program -> nn.Module
-del model_pte
-model_pte = aot_load(export_path)
-# model_pte = aot_load(export_path).module().to(device)
+# load exported program as a callable module (no .eval())
 
-def renorm(sr, lr, eps=1e-6):
-    return (sr - sr.mean([2,3], True)) / (sr.std([2,3], True) + eps) * lr.std([2,3], True) + lr.mean([2,3], True)
+ep = aot_load(export_path)
+model_pte = ep.module().to(device)
 
-def run_timed(fn, x):
-    if device.type == "cuda":
-        torch.cuda.synchronize()
-    t0 = time()
-    y = fn(x)
-    if device.type == "cuda":
-        torch.cuda.synchronize()
-    return y, time() - t0
-
-print("starting inference & comparison (eager vs torch.export)")
+print("starting inference (eager vs torch.export)")
 
 with torch.no_grad():
     for i, path in enumerate(test_LR_paths):
         LR = Image.open(path).convert("RGB")
         LR = transforms.ToTensor()(LR).to(device).unsqueeze(0) * 2 - 1
+        # LR = LR.half(); model.half(); model_pte.half()
 
-        # eager
-        SR_eager, te = run_timed(lambda x: renorm(model(x), x), LR)
+        # ----- eager -----
+        torch.cuda.synchronize()
+        t0 = time()
+        SR_eager = model(LR)
+        SR_eager = (SR_eager - SR_eager.mean(dim=[2,3], keepdim=True)) / (SR_eager.std(dim=[2,3], keepdim=True) + 1e-6) \
+                   * LR.std(dim=[2,3], keepdim=True) + LR.mean(dim=[2,3], keepdim=True)
+        torch.cuda.synchronize()
+        t_eager = time() - t0
 
-        # exported
-        if PTE_INCLUDES_POST:
-            SR_pte, tp = run_timed(model_pte, LR)
-        else:
-            SR_pte, tp = run_timed(lambda x: renorm(model_pte(x), x), LR)
+        # ----- torch.export -----
+        torch.cuda.synchronize()
+        t0 = time()
+        SR_pte = model_pte(LR)
+        if not PTE_HAS_POST:
+            SR_pte = (SR_pte - SR_pte.mean(dim=[2,3], keepdim=True)) / (SR_pte.std(dim=[2,3], keepdim=True) + 1e-6) \
+                     * LR.std(dim=[2,3], keepdim=True) + LR.mean(dim=[2,3], keepdim=True)
+        torch.cuda.synchronize()
+        t_pte = time() - t0
 
-        # quick diff
+        # ----- simple diff -----
         diff = (SR_eager - SR_pte).abs()
         print(f"[{i+1}/{len(test_LR_paths)}] {os.path.basename(path)} | "
-              f"eager {te:.4f}s vs export {tp:.4f}s | Δmax={diff.max().item():.6f}, Δmean={diff.mean().item():.6f}")
+              f"eager {t_eager:.4f}s  export {t_pte:.4f}s  | "
+              f"Δmax={diff.max().item():.6f}  Δmean={diff.mean().item():.6f}")
 
-        # save both
+        # ----- save outputs -----
         base = os.path.splitext(os.path.basename(path))[0]
-        transforms.ToPILImage()(((SR_eager[0]/2+0.5).clamp(0,1)).cpu()).save(os.path.join(args.SR_dir, f"{base}_eager.png"))
-        transforms.ToPILImage()(((SR_pte[0]/2+0.5).clamp(0,1)).cpu()).save(os.path.join(args.SR_dir, f"{base}_pte.png"))
+        transforms.ToPILImage()(((SR_eager[0] / 2 + 0.5).clamp(0,1)).cpu()).save(os.path.join(args.SR_dir, f"{base}_eager.png"))
+        transforms.ToPILImage()(((SR_pte[0]   / 2 + 0.5).clamp(0,1)).cpu()).save(os.path.join(args.SR_dir, f"{base}_pte.png"))
