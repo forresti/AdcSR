@@ -1,4 +1,11 @@
-import torch, os, glob, copy
+import os
+import glob
+import copy
+import torch
+from torch import nn
+from torch.export import export as aot_export
+from torch.export import save as aot_save
+from torch.export import load as aot_load
 import torch.nn.functional as F
 import numpy as np
 from PIL import Image
@@ -6,6 +13,7 @@ from argparse import ArgumentParser
 from torchvision import transforms
 from model import Net
 from time import time
+import math
 
 parser = ArgumentParser()
 parser.add_argument("--epoch", type=int, default=200)
@@ -72,25 +80,102 @@ os.makedirs(args.SR_dir, exist_ok=True)
 
 print("starting export")
 
+class SRWrapper(nn.Module):
+    def __init__(self, core: nn.Module):
+        super().__init__()
+        self.core = core
 
-# print("starting inference")
+    def forward(self, lr: torch.Tensor) -> torch.Tensor:
+        # lr is expected in [-1, 1], shape [N,3,H,W]
+        sr = self.core(lr)
+        # match our runtime post-processing
+        sr_mean = sr.mean(dim=[2, 3], keepdim=True)
+        sr_std  = sr.std(dim=[2, 3], keepdim=True)
+        lr_mean = lr.mean(dim=[2, 3], keepdim=True)
+        lr_std  = lr.std(dim=[2, 3], keepdim=True)
+        sr = (sr - sr_mean) / (sr_std + 1e-6) * lr_std + lr_mean
+        return sr
 
-# with torch.no_grad():
-#     for i, path in enumerate(test_LR_paths):
-#         LR = Image.open(path).convert("RGB")
-#         LR = transforms.ToTensor()(LR).to(device).unsqueeze(0) * 2 - 1
-#         # LR = LR.half()
+wrapped = SRWrapper(model).to(device).eval()
 
-#         torch.cuda.synchronize()
-#         start_time = time()
+example = torch.randn(1, 3, 256, 256, device=device)
 
-#         SR = model(LR)
-#         SR = (SR - SR.mean(dim=[2,3],keepdim=True)) / SR.std(dim=[2,3],keepdim=True) \
-#              * LR.std(dim=[2,3],keepdim=True) + LR.mean(dim=[2,3],keepdim=True)
+export_dir = f"{args.model_dir}/export"
+os.makedirs(export_dir, exist_ok=True)
 
-#         torch.cuda.synchronize()
-#         total_time = time() - start_time
-#         print(f"time {total_time} sec")
+# model_torchscript = torch.jit.trace(wrapped, example, check_trace=False)
+# torch.jit.save(model_torchscript, f"{export_dir}/model_torchscript.pt")
 
-#         SR = transforms.ToPILImage()((SR[0] / 2 + 0.5).clamp(0, 1).cpu())
-#         SR.save(os.path.join(args.SR_dir, os.path.basename(path)))
+model_pte = aot_export(wrapped, (example,))
+aot_save(model_pte, f"{export_dir}/model_pte.pt")
+
+
+print("starting inference")
+
+with torch.no_grad():
+    for i, path in enumerate(test_LR_paths):
+        LR = Image.open(path).convert("RGB")
+        LR = transforms.ToTensor()(LR).to(device).unsqueeze(0) * 2 - 1
+        # LR = LR.half()
+
+        torch.cuda.synchronize()
+        start_time = time()
+
+        SR = model(LR)
+        SR = (SR - SR.mean(dim=[2,3],keepdim=True)) / SR.std(dim=[2,3],keepdim=True) \
+             * LR.std(dim=[2,3],keepdim=True) + LR.mean(dim=[2,3],keepdim=True)
+
+        torch.cuda.synchronize()
+        total_time = time() - start_time
+        print(f"time {total_time} sec")
+
+        SR = transforms.ToPILImage()((SR[0] / 2 + 0.5).clamp(0, 1).cpu())
+        SR.save(os.path.join(args.SR_dir, os.path.basename(path)))
+
+
+# ---- minimal config ----
+export_path = f"{export_dir}/model_pte.pt"   # where you saved torch.export
+PTE_INCLUDES_POST = True  # set False if your export DID NOT include the LR/SR re-normalization
+
+# load exported program -> nn.Module
+del model_pte
+model_pte = aot_load(export_path)
+# model_pte = aot_load(export_path).module().to(device)
+
+def renorm(sr, lr, eps=1e-6):
+    return (sr - sr.mean([2,3], True)) / (sr.std([2,3], True) + eps) * lr.std([2,3], True) + lr.mean([2,3], True)
+
+def run_timed(fn, x):
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    t0 = time()
+    y = fn(x)
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    return y, time() - t0
+
+print("starting inference & comparison (eager vs torch.export)")
+
+with torch.no_grad():
+    for i, path in enumerate(test_LR_paths):
+        LR = Image.open(path).convert("RGB")
+        LR = transforms.ToTensor()(LR).to(device).unsqueeze(0) * 2 - 1
+
+        # eager
+        SR_eager, te = run_timed(lambda x: renorm(model(x), x), LR)
+
+        # exported
+        if PTE_INCLUDES_POST:
+            SR_pte, tp = run_timed(model_pte, LR)
+        else:
+            SR_pte, tp = run_timed(lambda x: renorm(model_pte(x), x), LR)
+
+        # quick diff
+        diff = (SR_eager - SR_pte).abs()
+        print(f"[{i+1}/{len(test_LR_paths)}] {os.path.basename(path)} | "
+              f"eager {te:.4f}s vs export {tp:.4f}s | Δmax={diff.max().item():.6f}, Δmean={diff.mean().item():.6f}")
+
+        # save both
+        base = os.path.splitext(os.path.basename(path))[0]
+        transforms.ToPILImage()(((SR_eager[0]/2+0.5).clamp(0,1)).cpu()).save(os.path.join(args.SR_dir, f"{base}_eager.png"))
+        transforms.ToPILImage()(((SR_pte[0]/2+0.5).clamp(0,1)).cpu()).save(os.path.join(args.SR_dir, f"{base}_pte.png"))
