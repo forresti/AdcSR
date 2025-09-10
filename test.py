@@ -72,8 +72,6 @@ os.makedirs(args.SR_dir, exist_ok=True)
 
 print("starting inference")
 
-# import pdb; pdb.set_trace()
-
 with torch.no_grad():
     for i, path in enumerate(test_LR_paths):
         LR = Image.open(path).convert("RGB")
