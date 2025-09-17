@@ -13,6 +13,7 @@ from argparse import ArgumentParser
 from torchvision import transforms
 from model import Net
 from time import time
+import coremltools as ct
 import math
 
 parser = ArgumentParser()
@@ -106,8 +107,9 @@ os.makedirs(export_dir, exist_ok=True)
 # model_torchscript = torch.jit.trace(wrapped, example, check_trace=False)
 # torch.jit.save(model_torchscript, f"{export_dir}/model_torchscript.pt")
 
-# model_pte = aot_export(wrapped, (example,))
-# aot_save(model_pte, f"{export_dir}/model_pte.pt")
+model_pte = aot_export(wrapped, (example,))
+aot_save(model_pte, f"{export_dir}/model_pte.pt")
+
 
 
 print("starting inference")

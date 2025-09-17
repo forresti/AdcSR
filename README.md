@@ -2,6 +2,10 @@
    <img src="assets/icon.png" alt="icon" width="200px"/>
 </p>
 
+## fni edits
+ - conda install -c conda-forge coremltools
+
+
 # (CVPR 2025) Adversarial Diffusion Compression for Real-World Image Super-Resolution [PyTorch]
 
 [![icon](https://img.shields.io/badge/ArXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/2411.13383) [![Hugging Face](https://img.shields.io/badge/Code_&_Models-%F0%9F%A4%97%20Hugging%20Face-blue)](https://huggingface.co/Guaishou74851/AdcSR) ![visitors](https://visitor-badge.laobi.icu/badge?page_id=Guaishou74851.AdcSR)
