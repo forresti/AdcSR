@@ -7,4 +7,5 @@ mkdir -p $out_dir
 
  python export.py \
    --LR_dir=$in_dir \
-   --SR_dir=$out_dir
+   --SR_dir=$out_dir \
+   --fp16
